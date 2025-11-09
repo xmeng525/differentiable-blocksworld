@@ -17,6 +17,25 @@ from utils.path import DATASETS_PATH
 EVAL_SCAN_IDS = [f'scan{i}' for i in [24, 31, 40, 45, 55, 59, 63, 75, 83, 105]]
 
 
+def process_data():
+    cam_data = np.load('./data/camera_info_26views_offset_30.npz')
+    intrinsics_all = torch.Tensor(cam_data['intrinsics_all'])
+    pose_all = torch.Tensor(cam_data['poses_all'])
+
+    n = intrinsics_all.shape[0]
+
+    KRT = []
+    for i in range(n):
+        KRT.append((
+            intrinsics_all[i],
+            pose_all[i, :3, :3],
+            pose_all[i, :3, 3]
+        ))
+    points = torch.rand(10000, 3) * 2.0 - 1.0
+
+    return KRT, points
+
+
 class DTUDataset(TorchDataset):
     name = 'dtu'
     raw_img_size = (1200, 1600)
@@ -39,16 +58,23 @@ class DTUDataset(TorchDataset):
             with use_seed(len(split + tag)):
                 np.random.shuffle(self.view_ids)
 
-        cam = np.load(self.data_path.parent / 'cameras.npz')
-        proj_mat = [(cam[f'world_mat_{i}'] @ cam[f'scale_mat_{i}'])[:3, :4] for i in range(N)]
-        self.KRT = [pytorch3d_KRT_from_proj(p, image_size=self.raw_img_size) for p in proj_mat]
+        if 'scan' not in self.tag:
+            print('use sps data')
+            KRT_all, self.pc_gt = process_data()
+            self.KRT = [pytorch3d_KRT_from_proj2(p, image_size=(256, 256)) for p in KRT_all]
 
-        filename = 'stl{}_total.ply'.format(tag.replace('scan', '').zfill(3))
-        points = load_ply(self.data_path.parent.parent / 'Points' / 'stl' / filename)[0]
-        self.scale_mat = torch.from_numpy(cam['scale_mat_0'])
-        scale_inv = self.scale_mat.inverse()
-        self.pc_gt = points @ scale_inv[:3, :3] + scale_inv[:3, 3]
+        else:
+            cam = np.load(self.data_path.parent / 'cameras.npz')
+            proj_mat = [(cam[f'world_mat_{i}'] @ cam[f'scale_mat_{i}'])[:3, :4] for i in range(N)]
+            self.KRT = [pytorch3d_KRT_from_proj(p, image_size=self.raw_img_size) for p in proj_mat]
 
+            filename = 'stl{}_total.ply'.format(tag.replace('scan', '').zfill(3))
+            points = load_ply(self.data_path.parent.parent / 'Points' / 'stl' / filename)[0]
+            self.scale_mat = torch.from_numpy(cam['scale_mat_0'])
+            scale_inv = self.scale_mat.inverse()
+            self.pc_gt = points @ scale_inv[:3, :3] + scale_inv[:3, 3]
+
+        print("KRT ; ", self.KRT[-1])
         if self.on_disk:
             self.imgs = [self.transform(Image.open(f).convert('RGB')) for f in self.input_files]
 
@@ -74,6 +100,51 @@ class DTUDataset(TorchDataset):
 
 def pytorch3d_KRT_from_proj(P, image_size):
     K, R, T = map(torch.from_numpy, opencv_KRT_from_proj(P))
+    # DTU convention is x_world = R @ x_cam + T, PyTorch3D convention is x_cam = R_p @ x_world + T_p
+    # we have x_cam = R.T @ x_world - R.T @ T, thus R_p = R.T and T_p = - R.T @ T
+    R = R.T
+    T = - R @ T
+
+    # Pytorch3d from opencv, adapted from _cameras_from_opencv_projection in pytorch3d/renderer/camera_conversions.py
+    #####################################
+
+    # Retype the image_size correctly and flip to width, height.
+    if isinstance(image_size, (tuple, list)):
+        image_size = torch.Tensor(image_size)[None]
+    image_size_wh = image_size.to(R).flip(dims=(1,))
+
+    # Screen to NDC conversion:
+    # For non square images, we scale the points such that smallest side
+    # has range [-1, 1] and the largest side has range [-u, u], with u > 1.
+    # This convention is consistent with the PyTorch3D renderer, as well as
+    # the transformation function `get_ndc_to_screen_transform`.
+    scale = image_size_wh.to(R).min(dim=1, keepdim=True)[0] / 2.0
+    scale = scale.expand(-1, 2)
+    c0 = image_size_wh / 2.0
+
+    # Get the PyTorch3D focal length and principal point.
+    focal_pytorch3d = torch.stack([K[0, 0], K[1, 1]], dim=-1) / scale
+    p0_pytorch3d = -(K[:2, 2] - c0) / scale
+    K_pytorch3d = torch.zeros(K.shape)
+    K_pytorch3d[0, 0] = focal_pytorch3d[..., 0]
+    K_pytorch3d[1, 1] = focal_pytorch3d[..., 1]
+    K_pytorch3d[:2, 2] = p0_pytorch3d
+    K_pytorch3d[2:, 2:] = 1 - torch.eye(2)
+
+    # For R, T we flip x, y axes (opencv screen space has an opposite
+    # orientation of screen axes).
+    # We also transpose R (opencv multiplies points from the opposite=left side).
+    R_pytorch3d = R.clone().T
+    T_pytorch3d = T.clone()
+    R_pytorch3d[:, :2] *= -1
+    T_pytorch3d[:2] *= -1
+    return K_pytorch3d, R_pytorch3d, T_pytorch3d
+
+
+def pytorch3d_KRT_from_proj2(P, image_size):
+    K, R, T = P
+
+    print(K, R, T)
     # DTU convention is x_world = R @ x_cam + T, PyTorch3D convention is x_cam = R_p @ x_world + T_p
     # we have x_cam = R.T @ x_world - R.T @ T, thus R_p = R.T and T_p = - R.T @ T
     R = R.T

@@ -14,13 +14,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 from .loss import get_loss, mse2psnr, tv_norm_funcs
 from .renderer import Renderer, get_circle_traj, save_trajectory_as_video, save_mesh_as_video, DIRECTION_LIGHT
 from .tools import safe_model_state_dict, elev_to_rotation_matrix, azim_to_rotation_matrix, roll_to_rotation_matrix
 from utils import use_seed, path_mkdir
 from utils.image import convert_to_img
-from utils.logger import print_warning
+from utils.logger import print_warning, create_logger, print_log, print_warning
 from utils.metrics import AverageMeter
 from utils.mesh import get_icosphere, get_icosphere_uvs, save_mesh_as_obj, get_plane, point_to_uv_sphericalmap
 from utils.plot import get_fancy_cmap
@@ -71,7 +70,7 @@ class DifferentiableBlocksWorld(nn.Module):
         assert len(kwargs) == 0, kwargs
 
         # Build spherical background and planar ground
-        self.bkg = get_icosphere(level=2, flip_faces=True).scale_verts_(self.z_far)
+        self.bkg = get_icosphere(level=3, flip_faces=True).scale_verts_(self.z_far)
         self.register_buffer('bkg_verts_uvs', point_to_uv_sphericalmap(self.bkg.verts_packed()))
         self.ground = get_plane().scale_verts_(torch.Tensor([self.z_far, 1, self.z_far])[None])
         for k in range(3):

@@ -25,7 +25,7 @@ from utils.pytorch import get_torch_device, torch_to
 
 LIGHT_MEMORY_RESULTS = True
 LOG_FMT = 'Epoch [{}/{}], Iter [{}/{}], {}'.format
-N_VIZ_SAMPLES = 4
+N_VIZ_SAMPLES = 26
 torch.backends.cudnn.benchmark = True  # XXX accelerate training if fixed input size for each layer
 warnings.filterwarnings('ignore')
 # torch.autograd.set_detect_anomaly(True)
@@ -85,6 +85,7 @@ class Trainer:
         pretrained, resume = cfg['training'].get('pretrained'), cfg['training'].get('resume')
         assert not (pretrained is not None and resume is not None)
         tag = pretrained or resume
+        print_log('tag = %s'%tag)
         if tag is not None:
             path = path_exists(RUNS_PATH / self.dataset.name / tag / 'model.pkl')
             checkpoint = torch.load(path, map_location=self.device)
@@ -227,15 +228,15 @@ class Trainer:
         # Images / renderings
         rec = self.model.predict(self.viz_samples, self.viz_labels, w_edges=True)
         self.rec_logger.save(rec)
-        self.rec_logger.save_video(rmtree=LIGHT_MEMORY_RESULTS)
+        # self.rec_logger.save_video(rmtree=LIGHT_MEMORY_RESULTS)
         rec = self.model.predict(self.viz_samples, self.viz_labels, filter_transparent=True)
         self.rec2_logger.save(rec)
-        self.rec2_logger.save_video(rmtree=LIGHT_MEMORY_RESULTS)
+        # self.rec2_logger.save_video(rmtree=LIGHT_MEMORY_RESULTS)
         rec = self.model.predict_synthetic(self.viz_samples, self.viz_labels)
         self.rec3_logger.save(rec)
-        self.rec3_logger.save_video(rmtree=LIGHT_MEMORY_RESULTS)
+        # self.rec3_logger.save_video(rmtree=LIGHT_MEMORY_RESULTS)
         self.txt_logger.save(self.model.get_arranged_block_txt())
-        self.txt_logger.save_video(rmtree=LIGHT_MEMORY_RESULTS)
+        # self.txt_logger.save_video(rmtree=LIGHT_MEMORY_RESULTS)
         print_log('Metrics and plots saved')
 
     def evaluate(self):
@@ -254,13 +255,17 @@ class Trainer:
 
         # official DTU eval
         if self.dataset.name == 'dtu':
-            scan_id = int(self.dataset.tag.replace('scan', ''))
-            scale = self.dataset.scale_mat.to(self.device)
+            if 'scan' not in self.dataset.tag:
+                scan_id = 0
+                scale = torch.eye(4)
+            else:
+                scan_id = int(self.dataset.tag.replace('scan', ''))
+                scale = self.dataset.scale_mat.to(self.device)
 
             # Blocks only
             scene = self.model.build_blocks(filter_transparent=True, as_scene=True)
             verts, faces = scene.get_mesh_verts_faces(0)
-            scene = Meshes((verts @ scale[:3, :3] + scale[:3, 3])[None], faces[None])
+            scene = Meshes((verts.cpu() @ scale.cpu()[:3, :3] + scale.cpu()[:3, 3])[None], faces.cpu()[None])
             evaluate_mesh(scene, scan_id, DATASETS_PATH / 'DTU', self.run_dir, save_viz=False)
 
             # Blocks + floor

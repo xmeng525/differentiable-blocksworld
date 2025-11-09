@@ -97,6 +97,7 @@ def evaluate_mesh(inp, scan_id, dataset_dir, eval_dir, suffix='', save_viz=True)
         # for debugging purpose
         trimesh.PointCloud(data_down).export("tmp.ply", "ply")
 
+    return  # For mesh exportation, the following is not needed.
     pbar.update(1)
     pbar.set_description('masking data pcd')
     obs_mask_file = loadmat(f'{dataset_dir}/ObsMask/ObsMask{scan_id}_10.mat')

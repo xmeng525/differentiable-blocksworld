@@ -1,0 +1,7 @@
+dataset:
+  name: dtu
+  tag: 2b82a928c4a81fe1df4cfe396cee719e_26views
+  img_size: [256, 256]
+# training:
+  # resume: 1108_sps_2b82a928c4a81fe1df4cfe396cee719e_26views
+
